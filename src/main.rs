@@ -73,7 +73,28 @@ fn cmd_type(parameters: &[&str]) {
     for param in parameters {
         if COMMANDS.contains_key(param) {
             println!("{} is a shell builtin", param);
-        } else {
+            continue;
+        }
+
+        let path = match std::env::var("PATH") {
+            Ok(p) => p,
+            Err(_) => {
+                println!("Could not read PATH environment variable");
+                return;
+            }
+        };
+
+        let mut found = false;
+        for dir in path.split(':') {
+            let full_path = std::path::Path::new(dir).join(param);
+            if full_path.exists() {
+                println!("{} is {}", param, full_path.display());
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
             println!("{}: not found", param);
         }
     }
