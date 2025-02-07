@@ -1,129 +1,157 @@
-#[allow(unused_imports)]
 use std::collections::HashMap;
 use std::io::{self, Write};
+use std::path::PathBuf;
+use thiserror::Error;
 
-#[macro_use]
-extern crate lazy_static;
-
-lazy_static! {
-    static ref COMMANDS: HashMap<&'static str, fn(&[&str]) -> Result<(), String>> = {
-        let mut m = HashMap::new();
-        m.insert("echo", cmd_echo as fn(&[&str]) -> Result<(), String>);
-        m.insert("exit", cmd_exit as fn(&[&str]) -> Result<(), String>);
-        m.insert("pwd", cmd_pwd as fn(&[&str]) -> Result<(), String>);
-        m.insert("type", cmd_type as fn(&[&str]) -> Result<(), String>);
-        m
-    };
+#[derive(Error, Debug)]
+pub enum ShellError {
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+    #[error("Environment error: {0}")]
+    Env(#[from] std::env::VarError),
+    #[error("{0}")]
+    Command(String),
+    #[error("Exit code: {0}")]
+    Exit(i32),
 }
 
-fn main() {
-    loop {
-        print!("$ ");
-        io::stdout().flush().unwrap();
+type ShellResult = Result<(), ShellError>;
 
-        // Wait for user input
-        let stdin = io::stdin();
-        let mut input = String::new();
-        stdin.read_line(&mut input).unwrap();
+#[derive(Clone)]
+enum Command {
+    Echo,
+    Exit,
+    Pwd,
+    Type,
+}
 
-        // Evaluate the input
-        evaluate_input(input.trim());
+impl Command {
+    fn execute(&self, shell: &Shell, args: &[&str]) -> ShellResult {
+        match self {
+            Command::Echo => {
+                println!("{}", args.join(" "));
+                Ok(())
+            }
+            Command::Exit => {
+                match args {
+                    [] => Err(ShellError::Command("exit: missing parameter".into())),
+                    ["0"] => std::process::exit(0),
+                    _ => Err(ShellError::Command("exit: invalid parameter".into())),
+                }
+            }
+            Command::Pwd => {
+                let current_dir = std::env::current_dir()
+                    .map_err(ShellError::Io)?;
+                println!("{}", current_dir.display());
+                Ok(())
+            }
+            Command::Type => {
+                if args.is_empty() {
+                    return Err(ShellError::Command("type: missing parameter".into()));
+                }
+
+                for arg in args {
+                    if shell.is_builtin(arg) {
+                        println!("{} is a shell builtin", arg);
+                        continue;
+                    }
+
+                    match find_executable_path(arg) {
+                        Ok(path) => println!("{} is {}", arg, path.display()),
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 }
 
-fn evaluate_input(input: &str) {
-    // Tokenize the input into commands and parameters
-    let tokens: Vec<&str> = input.split_whitespace().collect();
+struct Shell {
+    commands: HashMap<String, Command>,
+}
 
-    if tokens.is_empty() {
-        return;
+impl Shell {
+    fn new() -> Self {
+        let mut commands = HashMap::new();
+        commands.insert("echo".into(), Command::Echo);
+        commands.insert("exit".into(), Command::Exit);
+        commands.insert("pwd".into(), Command::Pwd);
+        commands.insert("type".into(), Command::Type);
+        Self { commands }
     }
 
-    let command = tokens[0];
-    let parameters = &tokens[1..];
+    fn is_builtin(&self, command: &str) -> bool {
+        self.commands.contains_key(command)
+    }
 
-    // Try built-in commands first
-    if let Some(&function) = COMMANDS.get(command) {
-        match function(parameters) {
-            Ok(_) => return,
-            Err(e) => {
-                eprintln!("{}", e);
-                return;
+    fn run(&mut self) -> ShellResult {
+        loop {
+            print!("$ ");
+            io::stdout().flush().map_err(ShellError::Io)?;
+
+            let mut input = String::new();
+            io::stdin()
+                .read_line(&mut input)
+                .map_err(ShellError::Io)?;
+
+            if let Err(e) = self.evaluate_input(input.trim()) {
+                match e {
+                    ShellError::Exit(code) => std::process::exit(code),
+                    _ => eprintln!("{}", e),
+                }
             }
         }
     }
 
-    // Next, find and execute an executable with params
-    match find_executable_path(command) {
-        Ok(_) => {
-            let mut cmd = std::process::Command::new(command);
-            cmd.args(parameters);
-            let output = cmd.output().unwrap();
-            io::stdout().write_all(&output.stdout).unwrap();
-            io::stderr().write_all(&output.stderr).unwrap();
-        },
-        Err(e) => {
-            eprintln!("{}", e);
-        }
-    }
-}
+    fn evaluate_input(&self, input: &str) -> ShellResult {
+        let tokens: Vec<&str> = input.split_whitespace().collect();
 
-//// Builtin Commands ////
-
-fn cmd_echo(parameters: &[&str]) -> Result<(), String> {
-    println!("{}", parameters.join(" "));
-    Ok(())
-}
-
-fn cmd_exit(parameters: &[&str]) -> Result<(), String> {
-    if parameters.is_empty() {
-        return Err(format!("exit: missing parameter"));
-    } else if parameters == ["0"] {
-        std::process::exit(0);
-    } else {
-        return Err(format!("exit: invalid parameter"));
-    }
-}
-
-fn cmd_pwd(_: &[&str]) -> Result<(), String> {
-    println!("{}", std::env::current_dir().unwrap().display());
-    Ok(())
-}
-
-fn cmd_type(parameters: &[&str]) -> Result<(), String> {
-    if parameters.is_empty() {
-        return Err(format!("type: missing parameter"));
-    }
-
-    for param in parameters {
-        if COMMANDS.contains_key(param) {
-            println!("{} is a shell builtin", param);
-            continue;
+        if tokens.is_empty() {
+            return Ok(());
         }
 
-        match find_executable_path(param) {
-            Ok(p) => println!("{} is {}", param, p),
-            Err(e) => {
-                return Err(e);
-            }
-        };
+        let (command, args) = tokens.split_first()
+            .ok_or_else(|| ShellError::Command("No command provided".into()))?;
+
+        if let Some(cmd) = self.commands.get(*command) {
+            cmd.execute(self, args)
+        } else {
+            self.execute_external(command, args)
+        }
     }
 
-    Ok(())
+    fn execute_external(&self, command: &str, args: &[&str]) -> ShellResult {
+        let _ = find_executable_path(command)?;
+
+        let output = std::process::Command::new(command)
+            .args(args)
+            .output()
+            .map_err(ShellError::Io)?;
+
+        io::stdout().write_all(&output.stdout).map_err(ShellError::Io)?;
+        io::stderr().write_all(&output.stderr).map_err(ShellError::Io)?;
+
+        Ok(())
+    }
 }
 
-//// Helper Functions ////
-
-fn find_executable_path(param: &str) -> Result<String, String> {
+fn find_executable_path(command: &str) -> Result<PathBuf, ShellError> {
     let path = std::env::var("PATH")
-        .map_err(|_| "Could not read PATH environment variable".to_string())?;
+        .map_err(ShellError::Env)?;
 
     for dir in path.split(':') {
-        let full_path = std::path::Path::new(dir).join(param);
+        let full_path = PathBuf::from(dir).join(command);
         if full_path.exists() {
-            return Ok(full_path.display().to_string());
+            return Ok(full_path);
         }
     }
 
-    Err(format!("{}: not found", param))
+    Err(ShellError::Command(format!("{}: not found", command)))
 }
+
+fn main() -> ShellResult {
+    let mut shell = Shell::new();
+    shell.run()
+}
+
