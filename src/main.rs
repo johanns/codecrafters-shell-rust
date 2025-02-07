@@ -33,8 +33,17 @@ impl Command {
                 let new_dir = args
                     .get(0)
                     .ok_or(ShellError::Command("cd: missing parameter".into()))?;
-                std::env::set_current_dir(new_dir).map_err(|_| {
-                    ShellError::Command(format!("cd: {}: No such file or directory", new_dir))
+
+                let target_dir = if *new_dir == "~" {
+                    std::env::var("HOME").map_err(|_| {
+                        ShellError::Command("cd: HOME not set".into())
+                    })?
+                } else {
+                    new_dir.to_string()
+                };
+
+                std::env::set_current_dir(&target_dir).map_err(|_| {
+                    ShellError::Command(format!("cd: {}: No such file or directory", target_dir))
                 })?;
                 Ok(())
             }
