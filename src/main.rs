@@ -19,6 +19,7 @@ type ShellResult = Result<(), ShellError>;
 
 #[derive(Clone)]
 enum Command {
+    Cd,
     Echo,
     Exit,
     Pwd,
@@ -28,20 +29,26 @@ enum Command {
 impl Command {
     fn execute(&self, shell: &Shell, args: &[&str]) -> ShellResult {
         match self {
+            Command::Cd => {
+                let new_dir = args
+                    .get(0)
+                    .ok_or(ShellError::Command("cd: missing parameter".into()))?;
+                std::env::set_current_dir(new_dir).map_err(|_| {
+                    ShellError::Command(format!("cd: {}: No such file or directory", new_dir))
+                })?;
+                Ok(())
+            }
             Command::Echo => {
                 println!("{}", args.join(" "));
                 Ok(())
             }
-            Command::Exit => {
-                match args {
-                    [] => Err(ShellError::Command("exit: missing parameter".into())),
-                    ["0"] => std::process::exit(0),
-                    _ => Err(ShellError::Command("exit: invalid parameter".into())),
-                }
-            }
+            Command::Exit => match args {
+                [] => Err(ShellError::Command("exit: missing parameter".into())),
+                ["0"] => std::process::exit(0),
+                _ => Err(ShellError::Command("exit: invalid parameter".into())),
+            },
             Command::Pwd => {
-                let current_dir = std::env::current_dir()
-                    .map_err(ShellError::Io)?;
+                let current_dir = std::env::current_dir().map_err(ShellError::Io)?;
                 println!("{}", current_dir.display());
                 Ok(())
             }
@@ -74,6 +81,7 @@ struct Shell {
 impl Shell {
     fn new() -> Self {
         let mut commands = HashMap::new();
+        commands.insert("cd".into(), Command::Cd);
         commands.insert("echo".into(), Command::Echo);
         commands.insert("exit".into(), Command::Exit);
         commands.insert("pwd".into(), Command::Pwd);
@@ -91,9 +99,7 @@ impl Shell {
             io::stdout().flush().map_err(ShellError::Io)?;
 
             let mut input = String::new();
-            io::stdin()
-                .read_line(&mut input)
-                .map_err(ShellError::Io)?;
+            io::stdin().read_line(&mut input).map_err(ShellError::Io)?;
 
             if let Err(e) = self.evaluate_input(input.trim()) {
                 match e {
@@ -111,7 +117,8 @@ impl Shell {
             return Ok(());
         }
 
-        let (command, args) = tokens.split_first()
+        let (command, args) = tokens
+            .split_first()
             .ok_or_else(|| ShellError::Command("No command provided".into()))?;
 
         if let Some(cmd) = self.commands.get(*command) {
@@ -129,16 +136,19 @@ impl Shell {
             .output()
             .map_err(ShellError::Io)?;
 
-        io::stdout().write_all(&output.stdout).map_err(ShellError::Io)?;
-        io::stderr().write_all(&output.stderr).map_err(ShellError::Io)?;
+        io::stdout()
+            .write_all(&output.stdout)
+            .map_err(ShellError::Io)?;
+        io::stderr()
+            .write_all(&output.stderr)
+            .map_err(ShellError::Io)?;
 
         Ok(())
     }
 }
 
 fn find_executable_path(command: &str) -> Result<PathBuf, ShellError> {
-    let path = std::env::var("PATH")
-        .map_err(ShellError::Env)?;
+    let path = std::env::var("PATH").map_err(ShellError::Env)?;
 
     for dir in path.split(':') {
         let full_path = PathBuf::from(dir).join(command);
@@ -154,4 +164,3 @@ fn main() -> ShellResult {
     let mut shell = Shell::new();
     shell.run()
 }
-
