@@ -1,5 +1,19 @@
 #[allow(unused_imports)]
+use std::collections::HashMap;
 use std::io::{self, Write};
+
+#[macro_use]
+extern crate lazy_static;
+
+lazy_static! {
+    static ref COMMANDS: HashMap<&'static str, fn(&[&str])> = {
+        let mut m = HashMap::new();
+        m.insert("echo", cmd_echo as fn(&[&str]));
+        m.insert("exit", cmd_exit as fn(&[&str]));
+        m.insert("type", cmd_type as fn(&[&str]));
+        m
+    };
+}
 
 fn main() {
     loop {
@@ -27,9 +41,40 @@ fn evaluate_input(input: &str) {
     let command = tokens[0];
     let parameters = &tokens[1..];
 
-    match command {
-        "echo" => println!("{}", parameters.join(" ")),
-        "exit" if parameters == ["0"] => std::process::exit(0),
-        _ => println!("{}: command not found", input),
+    if let Some(&function) = COMMANDS.get(command) {
+        function(parameters);
+    } else {
+        println!("{}: command not found", input);
+    }
+}
+
+//// Builtin Commands ////
+
+fn cmd_echo(parameters: &[&str]) {
+    println!("{}", parameters.join(" "));
+}
+
+fn cmd_exit(parameters: &[&str]) {
+    if parameters.is_empty() {
+        println!("exit: missing parameter");
+    } else if parameters == ["0"] {
+        std::process::exit(0);
+    } else {
+        println!("exit: invalid parameter");
+    }
+}
+
+fn cmd_type(parameters: &[&str]) {
+    if parameters.is_empty() {
+        println!("type: missing parameter");
+        return;
+    }
+
+    for param in parameters {
+        if COMMANDS.contains_key(param) {
+            println!("{} is a shell builtin", param);
+        } else {
+            println!("{}: not found", param);
+        }
     }
 }
