@@ -6,11 +6,11 @@ use std::io::{self, Write};
 extern crate lazy_static;
 
 lazy_static! {
-    static ref COMMANDS: HashMap<&'static str, fn(&[&str])> = {
+    static ref COMMANDS: HashMap<&'static str, fn(&[&str]) -> Result<(), String>> = {
         let mut m = HashMap::new();
-        m.insert("echo", cmd_echo as fn(&[&str]));
-        m.insert("exit", cmd_exit as fn(&[&str]));
-        m.insert("type", cmd_type as fn(&[&str]));
+        m.insert("echo", cmd_echo as fn(&[&str]) -> Result<(), String>);
+        m.insert("exit", cmd_exit as fn(&[&str]) -> Result<(), String>);
+        m.insert("type", cmd_type as fn(&[&str]) -> Result<(), String>);
         m
     };
 }
@@ -41,33 +41,52 @@ fn evaluate_input(input: &str) {
     let command = tokens[0];
     let parameters = &tokens[1..];
 
+    // Try built-in commands first
     if let Some(&function) = COMMANDS.get(command) {
-        function(parameters);
-    } else {
-        println!("{}: command not found", input);
+        match function(parameters) {
+            Ok(_) => return,
+            Err(e) => {
+                eprintln!("{}", e);
+                return;
+            }
+        }
+    }
+
+    // Next, find and execute an executable with params
+    match find_executable_path(command) {
+        Ok(_) => {
+            let mut cmd = std::process::Command::new(command);
+            cmd.args(parameters);
+            let output = cmd.output().unwrap();
+            io::stdout().write_all(&output.stdout).unwrap();
+            io::stderr().write_all(&output.stderr).unwrap();
+        },
+        Err(e) => {
+            eprintln!("{}", e);
+        }
     }
 }
 
 //// Builtin Commands ////
 
-fn cmd_echo(parameters: &[&str]) {
+fn cmd_echo(parameters: &[&str]) -> Result<(), String> {
     println!("{}", parameters.join(" "));
+    Ok(())
 }
 
-fn cmd_exit(parameters: &[&str]) {
+fn cmd_exit(parameters: &[&str]) -> Result<(), String> {
     if parameters.is_empty() {
-        println!("exit: missing parameter");
+        return Err(format!("exit: missing parameter"));
     } else if parameters == ["0"] {
         std::process::exit(0);
     } else {
-        println!("exit: invalid parameter");
+        return Err(format!("exit: invalid parameter"));
     }
 }
 
-fn cmd_type(parameters: &[&str]) {
+fn cmd_type(parameters: &[&str]) -> Result<(), String> {
     if parameters.is_empty() {
-        println!("type: missing parameter");
-        return;
+        return Err(format!("type: missing parameter"));
     }
 
     for param in parameters {
@@ -76,26 +95,29 @@ fn cmd_type(parameters: &[&str]) {
             continue;
         }
 
-        let path = match std::env::var("PATH") {
-            Ok(p) => p,
-            Err(_) => {
-                println!("Could not read PATH environment variable");
-                return;
+        match find_executable_path(param) {
+            Ok(p) => println!("{} is {}", param, p),
+            Err(e) => {
+                return Err(e);
             }
         };
+    }
 
-        let mut found = false;
-        for dir in path.split(':') {
-            let full_path = std::path::Path::new(dir).join(param);
-            if full_path.exists() {
-                println!("{} is {}", param, full_path.display());
-                found = true;
-                break;
-            }
-        }
+    Ok(())
+}
 
-        if !found {
-            println!("{}: not found", param);
+//// Helper Functions ////
+
+fn find_executable_path(param: &str) -> Result<String, String> {
+    let path = std::env::var("PATH")
+        .map_err(|_| "Could not read PATH environment variable".to_string())?;
+
+    for dir in path.split(':') {
+        let full_path = std::path::Path::new(dir).join(param);
+        if full_path.exists() {
+            return Ok(full_path.display().to_string());
         }
     }
+
+    Err(format!("{}: not found", param))
 }
