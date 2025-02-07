@@ -10,6 +10,7 @@ lazy_static! {
         let mut m = HashMap::new();
         m.insert("echo", cmd_echo as fn(&[&str]) -> Result<(), String>);
         m.insert("exit", cmd_exit as fn(&[&str]) -> Result<(), String>);
+        m.insert("pwd", cmd_pwd as fn(&[&str]) -> Result<(), String>);
         m.insert("type", cmd_type as fn(&[&str]) -> Result<(), String>);
         m
     };
@@ -82,6 +83,11 @@ fn cmd_exit(parameters: &[&str]) -> Result<(), String> {
     } else {
         return Err(format!("exit: invalid parameter"));
     }
+}
+
+fn cmd_pwd(_: &[&str]) -> Result<(), String> {
+    println!("{}", std::env::current_dir().unwrap().display());
+    Ok(())
 }
 
 fn cmd_type(parameters: &[&str]) -> Result<(), String> {
