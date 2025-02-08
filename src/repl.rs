@@ -74,14 +74,16 @@ fn tokenize(input: &str) -> Result<Vec<String>, ShellError> {
                         current_token = String::new();
                     }
                 } else if ch == '\\' {
-                    // Look ahead to the next character.
+                    // Look ahead to process escape sequences.
                     if let Some(next_char) = chars.next() {
                         if next_char == '\n' {
+                            // Backslash-newline: skip both (line continuation)
                             continue;
                         } else {
                             current_token.push(next_char);
                         }
                     } else {
+                        // Trailing backslash -- push it literally.
                         current_token.push(ch);
                     }
                 } else if ch == '\'' {
@@ -102,6 +104,25 @@ fn tokenize(input: &str) -> Result<Vec<String>, ShellError> {
             State::InDoubleQuote => {
                 if ch == '"' {
                     state = State::Normal;
+                } else if ch == '\\' {
+                    // In double quotes, backslash escapes only \, $, ", or newline.
+                    if let Some(next_char) = chars.next() {
+                        if next_char == '\\' || next_char == '$' || next_char == '"' || next_char == '\n' {
+                            if next_char == '\n' {
+                                // Line continuation within double quotes; skip both.
+                                continue;
+                            } else {
+                                current_token.push(next_char);
+                            }
+                        } else {
+                            // For any other character, keep the backslash literally.
+                            current_token.push('\\');
+                            current_token.push(next_char);
+                        }
+                    } else {
+                        // Trailing backslash: push it literally.
+                        current_token.push('\\');
+                    }
                 } else {
                     current_token.push(ch);
                 }
