@@ -40,7 +40,7 @@ impl Repl {
     }
 
     fn evaluate_input(&self, input: &str) -> ShellResult {
-        let tokens = self.tokenize(input)?;
+        let tokens = tokenize(input)?;
 
         let (command, args) = tokens
             .split_first()
@@ -50,62 +50,72 @@ impl Repl {
 
         self.shell.evaluate_command(command, &args)
     }
+}
 
-    fn tokenize(&self, input: &str) -> Result<Vec<String>, ShellError> {
-        #[derive(PartialEq)]
-        enum State {
-            Normal,
-            InSingleQuote,
-            InDoubleQuote,
-        }
+fn tokenize(input: &str) -> Result<Vec<String>, ShellError> {
+    #[derive(PartialEq)]
+    enum State {
+        Normal,
+        InSingleQuote,
+        InDoubleQuote,
+    }
 
-        let mut tokens = Vec::new();
-        let mut current_token = String::new();
-        let mut state = State::Normal;
+    let mut tokens = Vec::new();
+    let mut current_token = String::new();
+    let mut state = State::Normal;
+    let mut chars = input.chars();
 
-        for ch in input.chars() {
-            match state {
-                State::Normal => {
-                    if ch.is_whitespace() {
-                        if !current_token.is_empty() {
-                            tokens.push(current_token);
-                            current_token = String::new();
+    while let Some(ch) = chars.next() {
+        match state {
+            State::Normal => {
+                if ch.is_whitespace() {
+                    if !current_token.is_empty() {
+                        tokens.push(current_token);
+                        current_token = String::new();
+                    }
+                } else if ch == '\\' {
+                    // Look ahead to the next character.
+                    if let Some(next_char) = chars.next() {
+                        if next_char == '\n' {
+                            continue;
+                        } else {
+                            current_token.push(next_char);
                         }
-                    } else if ch == '\'' {
-                        state = State::InSingleQuote;
-                    } else if ch == '"' {
-                        state = State::InDoubleQuote;
                     } else {
                         current_token.push(ch);
                     }
+                } else if ch == '\'' {
+                    state = State::InSingleQuote;
+                } else if ch == '"' {
+                    state = State::InDoubleQuote;
+                } else {
+                    current_token.push(ch);
                 }
-                State::InSingleQuote => {
-                    if ch == '\'' {
-                        state = State::Normal;
-                    } else {
-                        current_token.push(ch);
-                    }
+            }
+            State::InSingleQuote => {
+                if ch == '\'' {
+                    state = State::Normal;
+                } else {
+                    current_token.push(ch);
                 }
-                State::InDoubleQuote => {
-                    if ch == '"' {
-                        state = State::Normal;
-                    } else {
-                        current_token.push(ch);
-                    }
+            }
+            State::InDoubleQuote => {
+                if ch == '"' {
+                    state = State::Normal;
+                } else {
+                    current_token.push(ch);
                 }
             }
         }
-
-        if state != State::Normal {
-            return Err(ShellError::Command(
-                "Unclosed quote in input".into(),
-            ));
-        }
-
-        if !current_token.is_empty() {
-            tokens.push(current_token);
-        }
-
-        Ok(tokens)
     }
+
+    if state != State::Normal {
+        return Err(ShellError::Command("Unclosed quote in input".into()));
+    }
+
+    if !current_token.is_empty() {
+        tokens.push(current_token);
+    }
+
+    Ok(tokens)
 }
