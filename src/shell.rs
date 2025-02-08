@@ -21,13 +21,13 @@ impl Shell {
         &self.commands
     }
 
-    pub fn evaluate_command(&self, command: &str, args: &[&str]) -> ShellResult {
+    pub fn evaluate_command(&self, command: &str, args: &[&str], output: &mut crate::output::OutputManager) -> ShellResult {
         if let Some(cmd) = self.commands.get(command) {
-            cmd.execute(args, self)
+            cmd.execute(args, self, output)
         } else {
             // Create and execute external command
             let external_cmd = ExternalCommand::new(command)?;
-            external_cmd.execute(args, self)
+            external_cmd.execute(args, self, output)
         }
     }
 }

@@ -1,7 +1,6 @@
 use super::Command;
 use crate::error::{ShellError, ShellResult};
 use crate::shell::Shell;
-use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 
@@ -18,21 +17,26 @@ impl ExternalCommand {
 }
 
 impl Command for ExternalCommand {
-    fn execute(&self, args: &[&str], _shell: &Shell) -> ShellResult {
-        let output = match ProcessCommand::new(&self.name).args(args).spawn() {
-            Ok(child) => child.wait_with_output()?,
-            Err(_) => return Err(ShellError::Command(format!("{}: command not found", &self.name))),
+    fn execute(
+        &self,
+        args: &[&str],
+        _shell: &Shell,
+        output: &mut crate::output::OutputManager,
+    ) -> ShellResult {
+        let child_output = match ProcessCommand::new(&self.name)
+            .args(args)
+            .output() {
+            Ok(output) => output,
+            Err(_) => {
+                return Err(ShellError::Command(format!(
+                    "{}: command not found",
+                    &self.name
+                )))
+            }
         };
 
-        io::stdout().write_all(&output.stdout)?;
-        io::stderr().write_all(&output.stderr)?;
-
-        if !output.status.success() {
-            return Err(ShellError::CommandFailed {
-                code: output.status.code().unwrap_or(-1),
-                message: String::from_utf8_lossy(&output.stderr).into_owned(),
-            });
-        }
+        output.write_stdout(&String::from_utf8_lossy(&child_output.stdout))?;
+        output.write_stderr(&String::from_utf8_lossy(&child_output.stderr))?;
 
         Ok(())
     }
@@ -63,8 +67,5 @@ pub fn find_executable_path(command: &str) -> Result<PathBuf, ShellError> {
         }
     }
 
-    Err(ShellError::Command(format!(
-        "{}: not found",
-        command
-    )))
+    Err(ShellError::Command(format!("{}: not found", command)))
 }

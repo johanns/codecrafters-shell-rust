@@ -6,7 +6,12 @@ pub mod builtin;
 pub mod external;
 
 pub trait Command {
-    fn execute(&self, args: &[&str], shell: &Shell) -> ShellResult;
+    fn execute(
+        &self,
+        args: &[&str],
+        shell: &Shell,
+        output: &mut crate::output::OutputManager,
+    ) -> ShellResult;
     fn name(&self) -> &str;
     fn description(&self) -> &'static str;
 }

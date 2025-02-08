@@ -1,15 +1,19 @@
 use crate::error::{ShellError, ShellResult};
 use crate::shell::Shell;
-use std::io::{self, Write};
+use std::io::{self};
+
+use crate::output::OutputManager;
 
 pub struct Repl {
     shell: Shell,
+    output: OutputManager,
 }
 
 impl Repl {
     pub fn new() -> Self {
         Self {
             shell: Shell::new(),
+            output: OutputManager::new(),
         }
     }
 
@@ -18,15 +22,16 @@ impl Repl {
             if let Err(e) = self.run_single_command() {
                 match e {
                     ShellError::Exit(code) => std::process::exit(code),
-                    _ => eprintln!("{}", e),
+                    _ => {
+                        let _ = self.output.write_stderr(&format!("{}\n", e));
+                    }
                 }
             }
         }
     }
 
-    fn run_single_command(&self) -> ShellResult {
-        print!("$ ");
-        io::stdout().flush()?;
+    fn run_single_command(&mut self) -> ShellResult {
+        self.output.write_stdout("$ ")?;
 
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
@@ -39,17 +44,73 @@ impl Repl {
         self.evaluate_input(input)
     }
 
-    fn evaluate_input(&self, input: &str) -> ShellResult {
+    fn evaluate_input(&mut self, input: &str) -> ShellResult {
         let tokens = tokenize(input)?;
+        let (cmd_tokens, stdout_redir, stderr_redir) = extract_redirections(tokens)?;
 
-        let (command, args) = tokens
+        if cmd_tokens.is_empty() {
+            return Err(ShellError::Command("No command provided".into()));
+        }
+
+        if let Some((ref file, append)) = stdout_redir {
+            self.output.redirect_stdout(file, append)?;
+        }
+        if let Some((ref file, append)) = stderr_redir {
+            self.output.redirect_stderr(file, append)?;
+        }
+
+        let (command, args) = cmd_tokens
             .split_first()
             .ok_or_else(|| ShellError::Command("No command provided".into()))?;
 
         let args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let result = self
+            .shell
+            .evaluate_command(command, &args, &mut self.output);
 
-        self.shell.evaluate_command(command, &args)
+        self.output = OutputManager::new();
+
+        result
     }
+}
+
+fn extract_redirections(
+    tokens: Vec<String>,
+) -> Result<(Vec<String>, Option<(String, bool)>, Option<(String, bool)>), ShellError> {
+    let mut cmd_tokens = Vec::new();
+    let mut stdout_redir = None;
+    let mut stderr_redir = None;
+    let mut i = 0;
+
+    while i < tokens.len() {
+        let token = &tokens[i];
+        if token == ">"
+            || token == "1>"
+            || token == ">>"
+            || token == "1>>"
+            || token == "2>"
+            || token == "2>>"
+        {
+            if i + 1 >= tokens.len() {
+                return Err(ShellError::Command(
+                    "Missing filename for redirection operator".into(),
+                ));
+            }
+            let file = tokens[i + 1].clone();
+            let append = token.contains(">>");
+            if token.starts_with("2") {
+                stderr_redir = Some((file, append));
+            } else {
+                stdout_redir = Some((file, append));
+            }
+            i += 2;
+        } else {
+            cmd_tokens.push(token.clone());
+            i += 1;
+        }
+    }
+
+    Ok((cmd_tokens, stdout_redir, stderr_redir))
 }
 
 fn tokenize(input: &str) -> Result<Vec<String>, ShellError> {
@@ -107,7 +168,11 @@ fn tokenize(input: &str) -> Result<Vec<String>, ShellError> {
                 } else if ch == '\\' {
                     // In double quotes, backslash escapes only \, $, ", or newline.
                     if let Some(next_char) = chars.next() {
-                        if next_char == '\\' || next_char == '$' || next_char == '"' || next_char == '\n' {
+                        if next_char == '\\'
+                            || next_char == '$'
+                            || next_char == '"'
+                            || next_char == '\n'
+                        {
                             if next_char == '\n' {
                                 // Line continuation within double quotes; skip both.
                                 continue;

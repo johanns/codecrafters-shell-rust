@@ -17,7 +17,12 @@ impl CdCommand {
 }
 
 impl Command for CdCommand {
-    fn execute(&self, args: &[&str], _shell: &Shell) -> ShellResult {
+    fn execute(
+        &self,
+        args: &[&str],
+        _shell: &Shell,
+        _output: &mut crate::output::OutputManager,
+    ) -> ShellResult {
         let new_dir = args
             .get(0)
             .ok_or_else(|| ShellError::Command("cd: missing parameter".into()))?;
@@ -28,8 +33,9 @@ impl Command for CdCommand {
             new_dir.to_string()
         };
 
-        std::env::set_current_dir(&target_dir)
-            .map_err(|_| ShellError::Command(format!("cd: {}: No such file or directory", target_dir)))?;
+        std::env::set_current_dir(&target_dir).map_err(|_| {
+            ShellError::Command(format!("cd: {}: No such file or directory", target_dir))
+        })?;
         Ok(())
     }
 
@@ -49,8 +55,13 @@ impl EchoCommand {
 }
 
 impl Command for EchoCommand {
-    fn execute(&self, args: &[&str], _shell: &Shell) -> ShellResult {
-        println!("{}", args.join(" "));
+    fn execute(
+        &self,
+        args: &[&str],
+        _shell: &Shell,
+        output: &mut crate::output::OutputManager,
+    ) -> ShellResult {
+        output.write_stdout(&format!("{}\n", args.join(" ")))?;
         Ok(())
     }
 
@@ -70,7 +81,12 @@ impl ExitCommand {
 }
 
 impl Command for ExitCommand {
-    fn execute(&self, args: &[&str], _shell: &Shell) -> ShellResult {
+    fn execute(
+        &self,
+        args: &[&str],
+        _shell: &Shell,
+        _output: &mut crate::output::OutputManager,
+    ) -> ShellResult {
         match args {
             [] => Err(ShellError::Command("exit: missing parameter".into())),
             [code] => {
@@ -97,28 +113,33 @@ impl HelpCommand {
         Self
     }
 
-    fn print_help(&self, shell: &Shell) {
-        println!("Available commands:");
+    fn print_help(&self, shell: &Shell, output: &mut crate::output::OutputManager) {
+        let _ = output.write_stdout("Available commands:\n");
         let commands = shell.get_commands();
         let mut command_list: Vec<_> = commands.iter().collect();
         command_list.sort_by_key(|(name, _)| *name);
 
         for (name, cmd) in command_list {
-            println!("  {:<6} - {}", name, cmd.description());
+            let _ = output.write_stdout(&format!("  {:<6} - {}\n", name, cmd.description()));
         }
     }
 }
 
 impl Command for HelpCommand {
-    fn execute(&self, args: &[&str], shell: &Shell) -> ShellResult {
+    fn execute(
+        &self,
+        args: &[&str],
+        shell: &Shell,
+        output: &mut crate::output::OutputManager,
+    ) -> ShellResult {
         if args.is_empty() {
-            self.print_help(shell);
+            self.print_help(shell, output);
             return Ok(());
         }
 
         let command = args[0];
         if let Some(cmd) = shell.get_commands().get(command) {
-            println!("{} - {}", cmd.name(), cmd.description());
+            output.write_stdout(&format!("{} - {}\n", cmd.name(), cmd.description()))?;
         } else {
             return Err(ShellError::Command(format!("Unknown command: {}", command)));
         }
@@ -142,9 +163,15 @@ impl PwdCommand {
 }
 
 impl Command for PwdCommand {
-    fn execute(&self, _args: &[&str], _shell: &Shell) -> ShellResult {
+    fn execute(
+        &self,
+        _args: &[&str],
+        _shell: &Shell,
+        output: &mut crate::output::OutputManager,
+    ) -> ShellResult {
         let current_dir = std::env::current_dir()?;
-        println!("{}", current_dir.display());
+        output.write_stdout(&format!("{}\n", current_dir.display()))?;
+        
         Ok(())
     }
 
@@ -164,22 +191,28 @@ impl TypeCommand {
 }
 
 impl Command for TypeCommand {
-    fn execute(&self, args: &[&str], shell: &Shell) -> ShellResult {
+    fn execute(
+        &self,
+        args: &[&str],
+        shell: &Shell,
+        output: &mut crate::output::OutputManager,
+    ) -> ShellResult {
         if args.is_empty() {
             return Err(ShellError::Command("type: missing parameter".into()));
         }
 
         for arg in args {
             if shell.is_builtin(arg) {
-                println!("{} is a shell builtin", arg);
+                output.write_stdout(&format!("{} is a shell builtin\n", arg))?;
                 continue;
             }
 
             match find_executable_path(arg) {
-                Ok(path) => println!("{} is {}", arg, path.display()),
+                Ok(path) => output.write_stdout(&format!("{} is {}\n", arg, path.display()))?,
                 Err(e) => return Err(e),
             }
         }
+
         Ok(())
     }
 
@@ -191,4 +224,3 @@ impl Command for TypeCommand {
         "Display information about command type"
     }
 }
-

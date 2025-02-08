@@ -2,6 +2,7 @@ mod commands;
 mod error;
 mod repl;
 mod shell;
+mod output;
 
 use error::ShellResult;
 use repl::Repl;

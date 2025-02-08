@@ -12,9 +12,6 @@ pub enum ShellError {
     #[error("{0}")]
     Command(String),
 
-    #[error("Command failed with exit code {code}: {message}")]
-    CommandFailed { code: i32, message: String },
-
     #[error("Exit requested with code: {0}")]
     Exit(i32),
 }
